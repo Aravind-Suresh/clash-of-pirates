@@ -12,6 +12,7 @@
 import numpy as np
 import sys
 import cv2
+import math
 
 # Usage for IMAGE MODE ( MODE = 1 ): python main.py <mode> <image input>
 # Usage for VIDEO MODE ( MODE = 0 ): python main.py <mode>
@@ -25,6 +26,19 @@ DEBUG = 1
 # LOG_RESULT = 1 : logs final deductions
 LOG_RESULT = 1
 
+def orderClockwise(ptsO, pt):
+	pts = ptsO - np.asarray(pt)
+	pts = np.array(pts, dtype=np.float32)
+	slopes = []
+	for p in pts:
+		if p[0] > 0:
+			slopes.append(math.atan(p[1]/p[0]))
+		else:
+			slopes.append(math.pi + math.atan(p[1]/p[0]))
+	ptsSorted = [y for x, y in sorted(zip(list(slopes), list(np.arange(len(ptsO)))))]
+	ptsSorted = ptsO[ptsSorted]
+	return ptsSorted
+
 def getColorFromHue(hue):
 	if hue > 160 or hue < 50:
 		return "RED"
@@ -32,6 +46,9 @@ def getColorFromHue(hue):
 		return "GREEN"
 	elif hue >= 100 and hue < 150:
 		return "PURPLE"
+
+def dist(pt1, pt2):
+	return np.sqrt((pt1[0]-pt2[0])**2 + (pt1[1]-pt2[1])**2)
 
 def detectShapes(img, imgHue):
 	img = cv2.GaussianBlur(img, (5, 5), 0)
@@ -100,11 +117,34 @@ def detectShapes(img, imgHue):
 
 	carPos = None
 	if len(contours3):
-		x, y, w, h = cv2.boundingRect(contours3[0])
-		cv2.rectangle(imgWarp,(x,y),(x+w,y+h), 255,2)
-		coord = np.dot(MInv, np.asarray([x+w/2, y+h/2, 1]))
+		rect = cv2.minAreaRect(contours3[0])
+		box = cv2.boxPoints(rect)
+		box = np.int0(box)
+		coord = np.mean(box, 0)
+		box = orderClockwise(box, coord)
+		print box
+
+		d1 = dist(box[0], box[1])
+		d2 = dist(box[1], box[2])
+
+		angle = None
+		if d1 < d2:
+			num = box[1][1] - box[2][1]
+			den = box[1][0] - box[2][0]
+			if den == 0:
+				angle = 90
+			angle = np.degrees(np.arctan(1.0*num/den))
+		else:
+			num = box[1][1] - box[0][1]
+			den = box[1][0] - box[0][0]
+			if den == 0:
+				angle = 90
+			angle = np.degrees(np.arctan(1.0*num/den))
+
+		cv2.rectangle(imgWarp, tuple(box[0]), tuple(box[2]), 255,2)
+		coord = np.dot(MInv, np.asarray([coord[0], coord[1], 1]))
 		coord = (np.float32(coord) / coord[2])[:2]
-		carPos = {"center": tuple(coord)}
+		carPos = {"center": tuple(coord), "orientation": angle}
 
 	squares = []
 	for cnt in contours2:
