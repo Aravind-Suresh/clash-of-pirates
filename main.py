@@ -25,7 +25,15 @@ DEBUG = 1
 # LOG_RESULT = 1 : logs final deductions
 LOG_RESULT = 1
 
-def detectShapes(img):
+def getColorFromHue(hue):
+	if hue > 160 or hue < 50:
+		return "RED"
+	elif hue > 50 and hue < 100:
+		return "GREEN"
+	elif hue >= 100 and hue < 150:
+		return "PURPLE"
+
+def detectShapes(img, imgHue):
 	img = cv2.GaussianBlur(img, (5, 5), 0)
 	ret, thresh = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 	im, contours, hierarchy = cv2.findContours(thresh,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
@@ -51,6 +59,7 @@ def detectShapes(img):
 
 	M = cv2.getPerspectiveTransform(pts1, pts2)
 	imgWarp = cv2.warpPerspective(img, M, (int(dimy),int(dimx)))
+	MInv = cv2.getPerspectiveTransform(pts2, pts1)
 
 	if DEBUG:
 		cv2.imshow("imgWarp", imgWarp)
@@ -65,11 +74,16 @@ def detectShapes(img):
 	ret, thresh_new = cv2.threshold(cimg, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
 	circlesArr = []
+	X, Y = np.meshgrid(np.linspace(0, img.shape[1]-1, img.shape[1]), np.linspace(0, img.shape[0]-1, img.shape[0]))
 	for i in circles[0,:]:
 		# Covering circles
 		cv2.circle(thresh_new, (i[0],i[1]), i[2]+10, 255, -1)
 		cv2.circle(imgWarp, (i[0],i[1]), i[2], 127, -1)
-		circlesArr.append({"center":(i[0],i[1]), "area":np.pi*i[2]*i[2]})
+		colorHue = np.mean(imgHue[np.where((X-i[0])**2 + (Y-i[1])**2 < i[2]**2)])
+		# print colorHue
+		coord = np.dot(MInv, np.asarray([i[0], i[1], 1]))
+		coord = (np.float32(coord) / coord[2])[:2]
+		circlesArr.append({"center": tuple(coord), "area":np.pi*i[2]*i[2], "color":getColorFromHue(colorHue)})
 
 	im2, contours2, hierarchy2 = cv2.findContours(thresh_new,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
 
@@ -88,7 +102,9 @@ def detectShapes(img):
 	if len(contours3):
 		x, y, w, h = cv2.boundingRect(contours3[0])
 		cv2.rectangle(imgWarp,(x,y),(x+w,y+h), 255,2)
-		carPos = {"center": (x+w/2, y+h/2)}
+		coord = np.dot(MInv, np.asarray([x+w/2, y+h/2, 1]))
+		coord = (np.float32(coord) / coord[2])[:2]
+		carPos = {"center": tuple(coord)}
 
 	squares = []
 	for cnt in contours2:
@@ -99,7 +115,10 @@ def detectShapes(img):
 							[approx[0][0][0], approx[0][0][1]],
 							[approx[3][0][0], approx[3][0][1]]], dtype="int0")
 			# print np.mean(bdry, 0)
-			squares.append({"center": tuple(np.mean(bdry, 0)), "area": cv2.contourArea(approx)})
+			coord = np.mean(bdry, 0)
+			coord = np.dot(MInv, np.asarray([coord[0], coord[1], 1]))
+			coord = (np.float32(coord) / coord[2])[:2]
+			squares.append({"center": tuple(coord), "area": cv2.contourArea(approx)})
 			cv2.drawContours(imgWarp, [cnt], 0, 255, -1)
 
 	if DEBUG:
@@ -109,9 +128,14 @@ def detectShapes(img):
 	return carPos, squares, circlesArr
 
 if MODE:
-	img = cv2.imread(sys.argv[2], 0)
-	carPos, squares, circlesArr = detectShapes(img)
+	imgClr = cv2.imread(sys.argv[2])
+	imgHue = cv2.split(cv2.cvtColor(imgClr, cv2.COLOR_BGR2HSV))[0]
+	img = cv2.cvtColor(imgClr, cv2.COLOR_BGR2GRAY)
+	carPos, squares, circlesArr = detectShapes(img, imgHue)
 
+	if DEBUG:
+		cv2.imshow("img-hue", imgHue)
+		cv2.imshow("img-clr", imgClr)
 	if LOG_RESULT:
 		print squares
 		print circlesArr
@@ -120,9 +144,10 @@ if MODE:
 else:
 	cap = cv2.VideoCapture(CAMERA_PORT_INDEX)
 	while(1):
-		ret, img = cap.read()
-		img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-		carPos, squares, circlesArr = detectShapes(img)
+		ret, imgClr = cap.read()
+		imgHue = cv2.split(cv2.cvtColor(imgClr, cv2.COLOR_BGR2HSV))[0]
+		img = cv2.cvtColor(imgClr, cv2.COLOR_BGR2GRAY)
+		carPos, squares, circlesArr = detectShapes(img, imgHue)
 		k = cv2.waitKey(1)
 		if k == 27:
 			break
